@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
+from http.client import SWITCHING_PROTOCOLS
+import websockets
 from flask import Flask, send_file, request, redirect
+from flask_sock import Sock
+import json
+import base64
+import asyncio
 from io import BytesIO
 import gc
 import torch
@@ -37,7 +43,7 @@ def torch_gc():
     gc.collect()
 
 
-def generate_bytes(args):
+def generate_bytes(args, websocket):
     print(args)
     torch_gc()
     global sd_pipeline
@@ -63,7 +69,7 @@ def generate_bytes(args):
 
         # fp16 is half precision
         pipe = StableDiffusionPipeline.from_pretrained(
-            "../stable-diffusion-v1-4", local_files_only=True, use_auth_token=False,  revision="fp16",
+            "./stable-diffusion-v1-4", local_files_only=True, use_auth_token=False,  revision="fp16",
             torch_dtype=torch.float16, safety_checker=DummySafetyChecker())
 
         pipe = pipe.to(device)
@@ -79,22 +85,23 @@ def generate_bytes(args):
         device=device
     )
 
-    with autocast("cuda"):
-        image = sd_pipeline(prompt=optprompt, width=optwidth, height=optheight,
-                            guidance_scale=optscale, num_inference_steps=optsteps, latents=latents).images[0]
-
+    def updater(i, image):
         bio = BytesIO()
-        image.save(bio, format="png")
+        image[0].save(bio, format="PNG")
         bio.seek(0)
+        res = json.dumps({"route": "incremental_update",
+                         "step": i, "image": "data:image/png;base64," + base64.b64encode(bio.read()).decode('utf-8')})
+        websocket.send(res)
 
-        torch_gc()
-
-        return send_file(bio, as_attachment=False, mimetype="image/png")
+    with autocast("cuda"):
+        sd_pipeline(prompt=optprompt, width=optwidth, height=optheight,
+                    guidance_scale=optscale, num_inference_steps=optsteps, latents=latents, incremental_update_fn=updater, incremental_update_freq=2).images[0]
 
 
 app = Flask(__name__,
             static_url_path='',
             static_folder='../www')
+sock = Sock(app)
 
 
 @app.route('/')
@@ -102,11 +109,12 @@ def index():
     return redirect("/index.html", code=302)
 
 
-@app.route("/generate/", methods=['POST'])
-def generate():
-    args = request.get_json()
-    return generate_bytes(args)
+@sock.route('/generate-incr')
+def generate_incr(ws):
+    while True:
+        data = json.loads(ws.receive())
+        generate_bytes(data, ws)
 
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, host="0.0.0.0")

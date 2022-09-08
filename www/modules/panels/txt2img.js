@@ -127,16 +127,23 @@ export class TextToImage extends HTMLElement {
       params[id] = this.shadow.getElementById(id).value
     }
 
-    const response = await fetch("/generate/", {
-      method: "POST",
-      cache: "no-cache",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(params)
+    const socket = new WebSocket('ws://' + location.host + '/generate-incr');
+    // Connection opened
+    socket.addEventListener('open', (event) => {
+      socket.send(JSON.stringify(params));
+      document.getElementById("detail").setArgs(params);
     });
-    let uri = URL.createObjectURL(await response.blob());
-    document.getElementById("detail").setImage(uri);
-    document.getElementById("detail").setArgs(params);
-    document.getElementById("historyList").addImage(uri, params);
+    socket.addEventListener('message', ev => {
+      let data = JSON.parse(ev.data);
+      // console.log(ev);
+      console.log(data["image"]);
+      if (data["route"] == "incremental_update") {
+        document.getElementById("detail").setImage(data["image"]);
+      }
+      if (data["step"] >= params["steps"]) {
+        document.getElementById("historyList").addImage(data["image"], params);
+      }
+    });
   }
 }
 
