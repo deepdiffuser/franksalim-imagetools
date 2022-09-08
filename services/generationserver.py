@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-from http.client import SWITCHING_PROTOCOLS
-import websockets
 from flask import Flask, send_file, request, redirect
 from flask_sock import Sock
 import json
