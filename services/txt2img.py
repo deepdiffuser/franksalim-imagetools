@@ -10,10 +10,12 @@ from io import BytesIO
 
 from transformers import AutoFeatureExtractor
 from diffusers import StableDiffusionPipeline, StableDiffusionImg2ImgPipeline
+from diffusers import StableDiffusionOnnxPipeline
 from torch import autocast
 
 
 sd_pipeline = None
+
 
 def generate_txt2img(args):
     print(json.dumps(args))
@@ -32,26 +34,23 @@ def generate_txt2img(args):
         print("loading txt2img model...")
 
         # fp16 is half precision
-        pipe = StableDiffusionPipeline.from_pretrained(
-            "../stable-diffusion-v1-4",
-            local_files_only=True,
-            use_auth_token=False,
-            revision="fp16",
-            torch_dtype=torch.float16,
-            safety_checker=DummySafetyChecker())
+        pipe = StableDiffusionOnnxPipeline.from_pretrained(
+            "./sd_onnx", provider="CUDAExecutionProvider", revision="fp16", torch_dtype=torch.float16)
+        pipe.safety_checker = DummySafetyChecker()
 
         pipe = pipe.to(device)
 
-        pipe.enable_attention_slicing()
+        # pipe.enable_attention_slicing()
         sd_pipeline = pipe
 
     generator = torch.Generator(device=device)
     generator = generator.manual_seed(optseed)
-    latents = torch.randn(
-        (1, sd_pipeline.unet.in_channels, optheight // 8, optwidth // 8),
-        generator=generator,
-        device=device
-    )
+
+    # latents = torch.randn(
+    #       (1, sd_pipeline.unet.in_channels, optheight // 8, optwidth // 8),
+#        generator=generator,
+#        device=device
+    # )
 
     with autocast("cuda"):
         image = sd_pipeline(prompt=optprompt,
@@ -59,7 +58,7 @@ def generate_txt2img(args):
                             height=optheight,
                             guidance_scale=optscale,
                             num_inference_steps=optsteps,
-                            latents=latents).images[0]
+                            ).images[0]
 
         bio = BytesIO()
         image.save(bio, format="png")
